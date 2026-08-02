@@ -3,9 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gate_guardians/main.dart';
 
 void main() {
-  testWidgets('App renders scaffold status screen', (WidgetTester tester) async {
+  testWidgets('App renders the landing screen', (WidgetTester tester) async {
     await tester.pumpWidget(const GateGuardiansApp());
+    await tester.pumpAndSettle();
 
-    expect(find.text('Gate Guardians'), findsOneWidget);
+    expect(find.text('GUARDIANS OF THE GATE'), findsOneWidget);
+    expect(find.text('ENTER PORTAL'), findsOneWidget);
+    expect(find.text('REQUEST ACCESS'), findsOneWidget);
   });
 }

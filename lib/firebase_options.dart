@@ -33,10 +33,7 @@ class DefaultFirebaseOptions {
           'you can reconfigure this by running the FlutterFire CLI again.',
         );
       case TargetPlatform.windows:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return windows;
       case TargetPlatform.linux:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for linux - '
@@ -56,7 +53,6 @@ class DefaultFirebaseOptions {
     projectId: 'church-usher-app',
     storageBucket: 'church-usher-app.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyAr8LRZ8NH1YVj8Vg-38edNr64FsJFXfGE',
     appId: '1:384928842494:ios:615cbf21252813a1235baf',
@@ -64,5 +60,14 @@ class DefaultFirebaseOptions {
     projectId: 'church-usher-app',
     storageBucket: 'church-usher-app.firebasestorage.app',
     iosBundleId: 'com.cptvargo.gateGuardians',
+  );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyB9CayWyFJSQ7qHczNaTr7yzVS0LTnfmbc',
+    appId: '1:384928842494:web:eb9d15c20b65f6e2235baf',
+    messagingSenderId: '384928842494',
+    projectId: 'church-usher-app',
+    authDomain: 'church-usher-app.firebaseapp.com',
+    storageBucket: 'church-usher-app.firebasestorage.app',
   );
 }
