@@ -2,6 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
+import 'screens/auth_screen.dart';
 import 'screens/landing_screen.dart';
 import 'theme/app_colors.dart';
 
@@ -24,11 +25,14 @@ class GateGuardiansApp extends StatelessWidget {
         scaffoldBackgroundColor: AppColors.background,
         useMaterial3: true,
       ),
-      home: LandingScreen(
-        onEnterPortal: (mode) {
-          // TODO: replace with the real auth screen once it's built.
-          debugPrint('onEnterPortal($mode)');
-        },
+      home: Builder(
+        builder: (context) => LandingScreen(
+          onEnterPortal: (mode) {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => AuthScreen(initialMode: mode)),
+            );
+          },
+        ),
       ),
     );
   }
