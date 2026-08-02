@@ -1,14 +1,11 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
-// TODO: once `flutterfire configure` has been run against the
-// church-usher-app Firebase project, initialize Firebase here:
-//
-//   import 'package:firebase_core/firebase_core.dart';
-//   import 'firebase_options.dart';
-//   ...
-//   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+import 'firebase_options.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const GateGuardiansApp());
 }
 
@@ -39,7 +36,7 @@ class _ScaffoldStatusScreen extends StatelessWidget {
         child: Padding(
           padding: EdgeInsets.all(24),
           child: Text(
-            'Flutter project scaffolded.\nRun flutterfire configure to connect Firebase.',
+            'Flutter project scaffolded.\nFirebase connected to church-usher-app.',
             textAlign: TextAlign.center,
           ),
         ),

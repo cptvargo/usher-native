@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "384928842494",
+    "project_id": "church-usher-app",
+    "storage_bucket": "church-usher-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:384928842494:android:83cd60625cb58963235baf",
+        "android_client_info": {
+          "package_name": "com.cptvargo.gate_guardians"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAXXuz_KW77Y0KWxhSNQe8Wz2GtfKLWnns"
+        },
+        {
+          "current_key": "AIzaSyD0hkQ4O5sCsJr6WemUdVa682g3kWhgzME"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:384928842494:android:1e748e1bffb2c8a3235baf",
+        "android_client_info": {
+          "package_name": "com.guardians.usherpp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAXXuz_KW77Y0KWxhSNQe8Wz2GtfKLWnns"
+        },
+        {
+          "current_key": "AIzaSyD0hkQ4O5sCsJr6WemUdVa682g3kWhgzME"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
