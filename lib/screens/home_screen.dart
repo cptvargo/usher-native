@@ -4,15 +4,20 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
+import '../models/bulletin_block.dart';
 import '../models/deployment.dart';
 import '../models/roster_member.dart';
 import '../models/team_profile.dart';
 import '../services/auth_service.dart';
+import '../services/bulletin_parser.dart';
 import '../services/bulletin_service.dart';
 import '../services/deployment_service.dart';
 import '../services/roster_service.dart';
 import '../services/team_service.dart';
 import '../theme/app_colors.dart';
+import '../widgets/bulletin_blocks.dart';
+import '../widgets/fade_slide_in.dart';
+import '../widgets/glow_blob.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -485,6 +490,11 @@ class _CircleIconButton extends StatelessWidget {
   }
 }
 
+/// The current head usher's byline shown on the bulletin card. Not stored
+/// in Firestore (the `team` collection has no single "head usher" concept
+/// beyond the Admin role) — edit this if leadership changes.
+const kHeadUsherName = 'Louis Richardson';
+
 class _DashboardTab extends StatelessWidget {
   const _DashboardTab({
     super.key,
@@ -499,23 +509,54 @@ class _DashboardTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+    return Stack(
       children: [
-        Text(
-          'Welcome back, ${profile.name.split(' ').first}.',
-          style: GoogleFonts.inter(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: AppColors.slate500,
+        Positioned.fill(
+          child: IgnorePointer(
+            child: Stack(
+              children: [
+                Positioned(
+                  top: -120,
+                  right: -110,
+                  child: GlowBlob(
+                    size: 300,
+                    colors: [
+                      AppColors.amber100.withValues(alpha: 0.5),
+                      AppColors.amber600.withValues(alpha: 0.0),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-        const SizedBox(height: 18),
-        _BulletinCard(service: bulletinService ?? BulletinService()),
-        const SizedBox(height: 18),
-        _UpcomingDeploymentsCard(
-          service: deploymentService ?? DeploymentService(),
-          usherId: profile.id,
+        ListView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+          children: [
+            FadeSlideIn(
+              child: Text(
+                'Welcome back, ${profile.name.split(' ').first}.',
+                style: GoogleFonts.inter(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.slate700,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            FadeSlideIn(
+              delay: const Duration(milliseconds: 120),
+              child: _BulletinCard(service: bulletinService ?? BulletinService()),
+            ),
+            const SizedBox(height: 18),
+            FadeSlideIn(
+              delay: const Duration(milliseconds: 260),
+              child: _UpcomingDeploymentsCard(
+                service: deploymentService ?? DeploymentService(),
+                usherId: profile.id,
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -533,114 +574,418 @@ class _BulletinCard extends StatefulWidget {
 class _BulletinCardState extends State<_BulletinCard> {
   bool _editing = false;
   bool _saving = false;
-  late final TextEditingController _controller = TextEditingController();
+  List<_EditItem>? _editItems;
+  String? _latestText;
 
   @override
   void dispose() {
-    _controller.dispose();
+    _disposeEditItems();
     super.dispose();
   }
 
+  void _disposeEditItems() {
+    for (final item in _editItems ?? const <_EditItem>[]) {
+      item.controller.dispose();
+    }
+  }
+
+  void _startEditing() {
+    final blocks = parseBulletin(_latestText ?? '');
+    final items = [
+      for (final b in blocks)
+        switch (b) {
+          BulletinHeader(:final text) => _EditLine(_LineKind.header, text),
+          BulletinParagraph(:final text) => _EditLine(_LineKind.paragraph, text),
+          BulletinClosing(:final text) => _EditLine(_LineKind.closing, text),
+          BulletinTeamUpdates(:final entries) => _EditTeam(entries),
+        },
+    ];
+    if (items.isEmpty) items.add(_EditLine(_LineKind.header, ''));
+    setState(() {
+      _editItems = items;
+      _editing = true;
+    });
+  }
+
   Future<void> _save() async {
+    final items = _editItems;
+    if (items == null) return;
+    final raw = items
+        .map((item) => item.controller.text.trim())
+        .where((s) => s.isNotEmpty)
+        .join('\n');
+
     setState(() => _saving = true);
-    await widget.service.save(_controller.text.trim());
+    await widget.service.save(raw);
     if (!mounted) return;
+    _disposeEditItems();
     setState(() {
       _saving = false;
       _editing = false;
+      _editItems = null;
+    });
+  }
+
+  void _cancelEditing() {
+    _disposeEditItems();
+    setState(() {
+      _editing = false;
+      _editItems = null;
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: AppColors.amber50.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: AppColors.amber100.withValues(alpha: 0.6)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppColors.slate900, const Color(0xFF78350F)],
+        ),
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.amber800.withValues(alpha: 0.25),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
       ),
-      child: StreamBuilder<String>(
-        stream: widget.service.watch(),
-        builder: (context, snapshot) {
-          final text = snapshot.data;
-          if (!_editing && text != null) _controller.text = text;
+      child: Stack(
+        children: [
+          StreamBuilder<String>(
+            stream: widget.service.watch(),
+            builder: (context, snapshot) {
+              final text = snapshot.data;
+              if (text != null) _latestText = text;
 
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'SERVICE BULLETIN',
-                      style: GoogleFonts.inter(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.4,
-                        color: AppColors.amber700.withValues(alpha: 0.7),
+              return Padding(
+                padding: const EdgeInsets.only(right: 34),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 26,
+                          height: 26,
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.5),
+                            ),
+                          ),
+                          child: ClipOval(
+                            child: Image.asset('assets/images/logo.jpg', fit: BoxFit.cover),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text.rich(
+                            TextSpan(
+                              children: [
+                                TextSpan(
+                                  text: kHeadUsherName,
+                                  style: GoogleFonts.inter(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: '  ·  HEAD USHER',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.6,
+                                    color: AppColors.amber100.withValues(alpha: 0.6),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Container(height: 1, color: Colors.white.withValues(alpha: 0.12)),
+                    const SizedBox(height: 18),
+                    if (text == null)
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation(Colors.white),
+                        ),
+                      )
+                    else if (_editing)
+                      _BulletinEditor(
+                        items: _editItems!,
+                        onRemove: (i) => setState(() => _editItems!.removeAt(i)),
+                        onAddLine: () => setState(
+                          () => _editItems!.add(_EditLine(_LineKind.paragraph, '')),
+                        ),
+                        onCancel: _cancelEditing,
+                      )
+                    else
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (final block in parseBulletin(text))
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 16),
+                              child: BulletinBlockView(block: block),
+                            ),
+                        ],
                       ),
+                  ],
+                ),
+              );
+            },
+          ),
+          Positioned(
+            top: 0,
+            right: 0,
+            child: GestureDetector(
+              key: const ValueKey('bulletinEditButton'),
+              onTap: _saving ? null : () => _editing ? _save() : _startEditing(),
+              child: Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.14),
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: _saving
+                    ? const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation(Colors.white),
+                        ),
+                      )
+                    : Icon(
+                        _editing ? Icons.check_rounded : Icons.edit_rounded,
+                        size: 14,
+                        color: _editing ? const Color(0xFF34D399) : Colors.white,
+                      ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _LineKind { header, paragraph, closing }
+
+sealed class _EditItem {
+  TextEditingController get controller;
+}
+
+class _EditLine extends _EditItem {
+  _EditLine(this.kind, String text) : controller = TextEditingController(text: text);
+  final _LineKind kind;
+  @override
+  final TextEditingController controller;
+}
+
+class _EditTeam extends _EditItem {
+  _EditTeam(List<TeamUpdateEntry> entries)
+      : controller =
+            TextEditingController(text: entries.map((e) => e.toLine()).join('\n'));
+  @override
+  final TextEditingController controller;
+}
+
+/// Inline editor that mirrors the read view's section layout — the author
+/// types directly into the same Header/Paragraph/Team Updates blocks
+/// instead of one undifferentiated text box.
+class _BulletinEditor extends StatelessWidget {
+  const _BulletinEditor({
+    required this.items,
+    required this.onRemove,
+    required this.onAddLine,
+    required this.onCancel,
+  });
+
+  final List<_EditItem> items;
+  final void Function(int index) onRemove;
+  final VoidCallback onAddLine;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < items.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: switch (items[i]) {
+              _EditLine line => _EditLineField(line: line, onRemove: () => onRemove(i)),
+              _EditTeam team => _EditTeamField(team: team),
+            },
+          ),
+        Row(
+          children: [
+            GestureDetector(
+              onTap: onAddLine,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add_rounded, size: 14, color: AppColors.amber200),
+                  const SizedBox(width: 4),
+                  Text(
+                    'ADD LINE',
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1,
+                      color: AppColors.amber200,
                     ),
                   ),
-                  if (text == null)
-                    const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else if (_editing)
-                    GestureDetector(
-                      onTap: _saving ? null : _save,
-                      child: Text(
-                        _saving ? 'SAVING…' : 'SAVE',
-                        style: GoogleFonts.inter(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1,
-                          color: const Color(0xFF10B981),
-                        ),
-                      ),
-                    )
-                  else
-                    GestureDetector(
-                      onTap: () => setState(() => _editing = true),
-                      child: Text(
-                        'EDIT',
-                        style: GoogleFonts.inter(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1,
-                          color: AppColors.amber700,
-                        ),
-                      ),
-                    ),
                 ],
               ),
-              const SizedBox(height: 10),
-              if (_editing)
-                TextField(
-                  controller: _controller,
-                  maxLines: null,
-                  style: GoogleFonts.playfairDisplay(
-                    fontSize: 15,
-                    fontStyle: FontStyle.italic,
-                    color: AppColors.slate800,
-                  ),
-                  decoration: const InputDecoration(border: InputBorder.none),
-                )
-              else
-                Text(
-                  text ?? '',
-                  style: GoogleFonts.playfairDisplay(
-                    fontSize: 15,
-                    fontStyle: FontStyle.italic,
-                    height: 1.5,
-                    color: AppColors.slate800,
-                  ),
+            ),
+            const SizedBox(width: 20),
+            GestureDetector(
+              onTap: onCancel,
+              child: Text(
+                'CANCEL',
+                style: GoogleFonts.inter(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1,
+                  color: Colors.white.withValues(alpha: 0.4),
                 ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _EditLineField extends StatelessWidget {
+  const _EditLineField({required this.line, required this.onRemove});
+  final _EditLine line;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = switch (line.kind) {
+      _LineKind.header => GoogleFonts.playfairDisplay(
+          fontSize: 22,
+          fontStyle: FontStyle.italic,
+          fontWeight: FontWeight.w600,
+          height: 1.3,
+          color: AppColors.amber200,
+        ),
+      _LineKind.paragraph ||
+      _LineKind.closing =>
+        GoogleFonts.inter(
+          fontSize: 14,
+          height: 1.5,
+          fontWeight: FontWeight.w500,
+          color: Colors.white.withValues(alpha: 0.92),
+        ),
+    };
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: TextField(
+            controller: line.controller,
+            maxLines: null,
+            style: style,
+            cursorColor: Colors.white,
+            decoration: const InputDecoration(
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+        ),
+        GestureDetector(
+          onTap: onRemove,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 8, top: 4),
+            child: Icon(Icons.close_rounded, size: 14, color: Colors.white.withValues(alpha: 0.35)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EditTeamField extends StatelessWidget {
+  const _EditTeamField({required this.team});
+  final _EditTeam team;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(color: AppColors.amber700, shape: BoxShape.circle),
+                alignment: Alignment.center,
+                child: const Icon(Icons.groups_rounded, size: 13, color: Colors.white),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'TEAM UPDATES',
+                style: GoogleFonts.inter(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.4,
+                  color: AppColors.amber200,
+                ),
+              ),
             ],
-          );
-        },
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: team.controller,
+            maxLines: null,
+            style: GoogleFonts.inter(fontSize: 13, height: 1.8, color: Colors.white),
+            cursorColor: Colors.white,
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: EdgeInsets.zero,
+              hintText: 'One name per line — add a role like "Robert - Lead Usher"',
+              hintStyle: GoogleFonts.inter(
+                fontSize: 11,
+                color: Colors.white.withValues(alpha: 0.32),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -671,14 +1016,32 @@ class _UpcomingDeploymentsCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'MY UPCOMING ASSIGNMENTS',
-            style: GoogleFonts.inter(
-              fontSize: 9,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.4,
-              color: AppColors.slate400,
-            ),
+          Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: AppColors.amber50,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.calendar_today_rounded,
+                  size: 13,
+                  color: AppColors.amber800,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'MY UPCOMING ASSIGNMENTS',
+                style: GoogleFonts.inter(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.4,
+                  color: AppColors.slate400,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 14),
           StreamBuilder<List<Deployment>>(

@@ -155,15 +155,133 @@ void main() {
 
     await pumpHome(tester);
 
-    await tester.tap(find.text('EDIT'));
+    final editButton = find.byKey(const ValueKey('bulletinEditButton'));
+    await tester.tap(editButton);
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'Doors open at 9am.');
-    await tester.tap(find.text('SAVE'));
+    await tester.tap(editButton);
     await tester.pumpAndSettle();
 
     final doc = await firestore.collection('content').doc('service_bulletin').get();
     expect(doc.data()?['text'], 'Doors open at 9am.');
     expect(find.text('Doors open at 9am.'), findsOneWidget);
+  });
+
+  group('bulletin inline block editor', () {
+    testWidgets('entering edit mode gives each block its own field, matching the read layout',
+        (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Jordan Usher',
+        'approved': true,
+        'denied': false,
+      });
+      await firestore.collection('content').doc('service_bulletin').set({
+        'text': 'Good evening, all\nLouis\nMatthias\nBrandt\nHave a blessed weekend.',
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byKey(const ValueKey('bulletinEditButton')));
+      await tester.pumpAndSettle();
+
+      // Header + Closing lines, plus one team-roster text field = 3 fields.
+      expect(find.byType(TextField), findsNWidgets(3));
+      expect(find.text('ADD LINE'), findsOneWidget);
+      expect(find.text('CANCEL'), findsOneWidget);
+    });
+
+    testWidgets('ADD LINE appends an empty editable paragraph', (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Jordan Usher',
+        'approved': true,
+        'denied': false,
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byKey(const ValueKey('bulletinEditButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TextField), findsNWidgets(1));
+      await tester.tap(find.text('ADD LINE'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TextField), findsNWidgets(2));
+    });
+
+    testWidgets('the close icon removes a line before saving', (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Jordan Usher',
+        'approved': true,
+        'denied': false,
+      });
+      await firestore.collection('content').doc('service_bulletin').set({
+        'text': 'Good evening, all\nSee you Sunday.',
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byKey(const ValueKey('bulletinEditButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TextField), findsNWidgets(2));
+      await tester.tap(find.byIcon(Icons.close_rounded).first);
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNWidgets(1));
+
+      await tester.tap(find.byKey(const ValueKey('bulletinEditButton')));
+      await tester.pumpAndSettle();
+
+      final doc = await firestore.collection('content').doc('service_bulletin').get();
+      expect(doc.data()?['text'], 'See you Sunday.');
+    });
+
+    testWidgets('CANCEL discards edits without saving', (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Jordan Usher',
+        'approved': true,
+        'denied': false,
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byKey(const ValueKey('bulletinEditButton')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'This should not be saved.');
+      await tester.tap(find.text('CANCEL'));
+      await tester.pumpAndSettle();
+
+      final doc = await firestore.collection('content').doc('service_bulletin').get();
+      expect(doc.data(), isNull);
+      expect(
+        find.text('Let our service be a blessing to all who enter these gates.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a "Name - Role" line round-trips through the team text field',
+        (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Jordan Usher',
+        'approved': true,
+        'denied': false,
+      });
+      await firestore.collection('content').doc('service_bulletin').set({
+        'text': 'Louis\nMatthias\nRobert - Lead Usher',
+      });
+
+      await pumpHome(tester);
+
+      expect(find.textContaining('LEAD USHER'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('bulletinEditButton')));
+      await tester.pumpAndSettle();
+
+      final teamField = tester.widget<TextField>(find.byType(TextField).first);
+      expect(teamField.controller!.text, 'Louis\nMatthias\nRobert - Lead Usher');
+
+      await tester.tap(find.byKey(const ValueKey('bulletinEditButton')));
+      await tester.pumpAndSettle();
+
+      final doc = await firestore.collection('content').doc('service_bulletin').get();
+      expect(doc.data()?['text'], 'Louis\nMatthias\nRobert - Lead Usher');
+    });
   });
 
   testWidgets('opening the profile sheet shows the name and a sign-out action',

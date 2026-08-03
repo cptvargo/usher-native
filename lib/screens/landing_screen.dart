@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../theme/app_colors.dart';
 import '../widgets/fade_slide_in.dart';
+import '../widgets/glow_blob.dart';
 
 class LandingScreen extends StatelessWidget {
   const LandingScreen({super.key, required this.onEnterPortal});
@@ -24,7 +25,7 @@ class LandingScreen extends StatelessWidget {
                   Positioned(
                     top: -180,
                     left: -140,
-                    child: _GlowBlob(
+                    child: GlowBlob(
                       size: 380,
                       colors: [AppColors.amber100.withValues(alpha: 0.55), AppColors.amber600.withValues(alpha: 0.0)],
                     ),
@@ -32,7 +33,7 @@ class LandingScreen extends StatelessWidget {
                   Positioned(
                     bottom: -160,
                     right: -140,
-                    child: _GlowBlob(
+                    child: GlowBlob(
                       size: 340,
                       colors: [AppColors.amber100.withValues(alpha: 0.45), AppColors.amber600.withValues(alpha: 0.0)],
                     ),
@@ -79,25 +80,6 @@ class LandingScreen extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _GlowBlob extends StatelessWidget {
-  const _GlowBlob({required this.size, required this.colors});
-
-  final double size;
-  final List<Color> colors;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(colors: colors),
       ),
     );
   }
