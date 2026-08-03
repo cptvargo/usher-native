@@ -4,10 +4,12 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
+import '../models/attendance_log.dart';
 import '../models/bulletin_block.dart';
 import '../models/deployment.dart';
 import '../models/roster_member.dart';
 import '../models/team_profile.dart';
+import '../services/attendance_service.dart';
 import '../services/auth_service.dart';
 import '../services/bulletin_parser.dart';
 import '../services/bulletin_service.dart';
@@ -28,6 +30,7 @@ class HomeScreen extends StatefulWidget {
     this.bulletinService,
     this.deploymentService,
     this.rosterService,
+    this.attendanceService,
     this.skipApprovalGateForTesting = false,
   });
 
@@ -37,6 +40,7 @@ class HomeScreen extends StatefulWidget {
   final BulletinService? bulletinService;
   final DeploymentService? deploymentService;
   final RosterService? rosterService;
+  final AttendanceService? attendanceService;
 
   /// TEMPORARY testing switch — skips the "Pending Approval" gate so the
   /// dashboard can be reached without an admin approving the account first.
@@ -101,6 +105,7 @@ class _HomeScreenState extends State<HomeScreen> {
           bulletinService: widget.bulletinService,
           deploymentService: widget.deploymentService,
           rosterService: widget.rosterService,
+          attendanceService: widget.attendanceService,
         );
       },
     );
@@ -248,6 +253,7 @@ class _Dashboard extends StatefulWidget {
     this.bulletinService,
     this.deploymentService,
     this.rosterService,
+    this.attendanceService,
   });
 
   final User user;
@@ -256,6 +262,7 @@ class _Dashboard extends StatefulWidget {
   final BulletinService? bulletinService;
   final DeploymentService? deploymentService;
   final RosterService? rosterService;
+  final AttendanceService? attendanceService;
 
   @override
   State<_Dashboard> createState() => _DashboardState();
@@ -364,6 +371,12 @@ class _DashboardState extends State<_Dashboard> {
         return _AdminTab(
           key: const ValueKey('admin'),
           service: widget.rosterService ?? RosterService(),
+        );
+      case 'Attendance':
+        return _AttendanceTab(
+          key: const ValueKey('attendance'),
+          profile: widget.profile,
+          service: widget.attendanceService ?? AttendanceService(),
         );
       default:
         return _ComingSoonTab(key: ValueKey(_tabIndex), destination: destination);
@@ -1659,6 +1672,523 @@ class _AdminTab extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+const _serviceInstances = [
+  'Sunday Morning',
+  'Sunday Evening',
+  'Wednesday Midweek',
+  'Special Revival / Event',
+];
+
+/// Tap-to-count headcount input: no keyboard, just + and − so an usher can
+/// tally people at the door and correct a miscount on the spot.
+class _TallyCounter extends StatelessWidget {
+  const _TallyCounter({required this.value, required this.onChanged});
+
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _TallyButton(
+            key: const ValueKey('tallyMinus'),
+            icon: Icons.remove_rounded,
+            enabled: value > 0,
+            onTap: () => onChanged(value - 1),
+          ),
+          Column(
+            children: [
+              Text(
+                '$value',
+                style: GoogleFonts.playfairDisplay(
+                  fontSize: 30,
+                  fontWeight: FontWeight.w800,
+                  fontStyle: FontStyle.italic,
+                  color: AppColors.slate800,
+                ),
+              ),
+              Text(
+                'HEADCOUNT',
+                style: GoogleFonts.inter(
+                  fontSize: 8,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1,
+                  color: AppColors.slate400,
+                ),
+              ),
+            ],
+          ),
+          _TallyButton(
+            key: const ValueKey('tallyPlus'),
+            icon: Icons.add_rounded,
+            enabled: true,
+            onTap: () => onChanged(value + 1),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TallyButton extends StatelessWidget {
+  const _TallyButton({
+    super.key,
+    required this.icon,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: enabled
+          ? () {
+              HapticFeedback.lightImpact();
+              onTap();
+            }
+          : null,
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: enabled ? AppColors.amber700 : AppColors.amber700.withValues(alpha: 0.3),
+          shape: BoxShape.circle,
+        ),
+        alignment: Alignment.center,
+        child: Icon(icon, color: Colors.white, size: 22),
+      ),
+    );
+  }
+}
+
+class _AttendanceTab extends StatefulWidget {
+  const _AttendanceTab({super.key, required this.profile, required this.service});
+
+  final TeamProfile profile;
+  final AttendanceService service;
+
+  @override
+  State<_AttendanceTab> createState() => _AttendanceTabState();
+}
+
+class _AttendanceTabState extends State<_AttendanceTab> {
+  int _headcount = 0;
+  final _notesCtrl = TextEditingController();
+  String _serviceInstance = _serviceInstances.first;
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() => _submitting = true);
+    await widget.service.addLog(
+      headcount: _headcount,
+      serviceType: _serviceInstance,
+      notes: _notesCtrl.text.trim(),
+      submittedBy: widget.profile.name,
+    );
+    if (!mounted) return;
+    setState(() {
+      _submitting = false;
+      _headcount = 0;
+      _notesCtrl.clear();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: AppColors.amber50),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.slate900.withValues(alpha: 0.04),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.fact_check_rounded, color: AppColors.amber700, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    'New Attendance Log',
+                    style: GoogleFonts.playfairDisplay(
+                      fontSize: 17,
+                      fontStyle: FontStyle.italic,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.slate800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              DropdownButtonFormField<String>(
+                initialValue: _serviceInstance,
+                decoration: _fieldDecoration(),
+                items: [
+                  for (final s in _serviceInstances)
+                    DropdownMenuItem(value: s, child: Text(s)),
+                ],
+                onChanged: (v) => setState(() => _serviceInstance = v ?? _serviceInstance),
+              ),
+              const SizedBox(height: 12),
+              _TallyCounter(
+                value: _headcount,
+                onChanged: (v) => setState(() => _headcount = v),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _notesCtrl,
+                maxLines: 3,
+                decoration: _fieldDecoration(hint: 'Service notes (optional)'),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _submitting ? null : _submit,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.amber700,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  child: Text(
+                    _submitting ? 'Publishing…' : 'Publish Service Log',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          'Historical Headcounts',
+          style: GoogleFonts.playfairDisplay(
+            fontSize: 18,
+            fontStyle: FontStyle.italic,
+            fontWeight: FontWeight.w600,
+            color: AppColors.slate800,
+          ),
+        ),
+        const SizedBox(height: 14),
+        StreamBuilder<List<AttendanceLog>>(
+          stream: widget.service.watchLogs(),
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return _ErrorNotice(error: snapshot.error!);
+            }
+            if (!snapshot.hasData) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+            final logs = snapshot.data!;
+            if (logs.isEmpty) {
+              return Text(
+                'No attendance logs yet.',
+                style: GoogleFonts.inter(color: AppColors.slate400),
+              );
+            }
+            return Column(
+              children: [
+                for (final log in logs)
+                  _AttendanceLogCard(
+                    log: log,
+                    canEdit: widget.profile.isLead,
+                    service: widget.service,
+                  ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+InputDecoration _fieldDecoration({String? hint}) {
+  return InputDecoration(
+    hintText: hint,
+    filled: true,
+    fillColor: AppColors.background,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide.none,
+    ),
+  );
+}
+
+class _AttendanceLogCard extends StatefulWidget {
+  const _AttendanceLogCard({
+    required this.log,
+    required this.canEdit,
+    required this.service,
+  });
+
+  final AttendanceLog log;
+  final bool canEdit;
+  final AttendanceService service;
+
+  @override
+  State<_AttendanceLogCard> createState() => _AttendanceLogCardState();
+}
+
+class _AttendanceLogCardState extends State<_AttendanceLogCard> {
+  bool _editing = false;
+  late int _headcount = widget.log.headcount;
+  late final TextEditingController _notesCtrl =
+      TextEditingController(text: widget.log.notes ?? '');
+
+  @override
+  void dispose() {
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    await widget.service.updateLog(
+      widget.log.id,
+      headcount: _headcount,
+      notes: _notesCtrl.text.trim(),
+    );
+    if (!mounted) return;
+    setState(() => _editing = false);
+  }
+
+  Future<void> _confirmDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        title: const Text('Delete this log?'),
+        content: const Text('This attendance entry will be permanently removed.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await widget.service.deleteLog(widget.log.id);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final log = widget.log;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppColors.amber50),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.slate900.withValues(alpha: 0.03),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: _editing ? _buildEditForm() : _buildReadView(log),
+    );
+  }
+
+  Widget _buildReadView(AttendanceLog log) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.amber100.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      log.serviceType,
+                      style: GoogleFonts.inter(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8,
+                        color: AppColors.amber800,
+                      ),
+                    ),
+                  ),
+                  if (log.createdAt != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      DateFormat('EEEE, MMMM d, yyyy').format(log.createdAt!),
+                      style: GoogleFonts.inter(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
+                        color: AppColors.slate400,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (widget.canEdit) ...[
+              IconButton(
+                icon: const Icon(Icons.edit_rounded, size: 15),
+                color: AppColors.slate400,
+                onPressed: () => setState(() => _editing = true),
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline_rounded, size: 15),
+                color: AppColors.slate400,
+                onPressed: _confirmDelete,
+              ),
+            ],
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${log.headcount}',
+                  style: GoogleFonts.playfairDisplay(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    fontStyle: FontStyle.italic,
+                    color: AppColors.slate800,
+                  ),
+                ),
+                Text(
+                  'SAINTS COUNTED',
+                  style: GoogleFonts.inter(
+                    fontSize: 8,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1,
+                    color: AppColors.slate400,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        if (log.notes != null) ...[
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Text(
+              log.notes!,
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                height: 1.5,
+                color: AppColors.slate500,
+              ),
+            ),
+          ),
+        ],
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerRight,
+          child: Text(
+            'LOGGED BY: ${log.submittedBy}'.toUpperCase(),
+            style: GoogleFonts.inter(
+              fontSize: 8,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.8,
+              color: AppColors.slate400,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEditForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _TallyCounter(
+          value: _headcount,
+          onChanged: (v) => setState(() => _headcount = v),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _notesCtrl,
+          maxLines: 2,
+          decoration: _fieldDecoration(hint: 'Notes'),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed: () => setState(() => _editing = false),
+              child: const Text('Cancel'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF10B981)),
+              onPressed: _save,
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

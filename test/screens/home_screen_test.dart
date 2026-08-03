@@ -3,6 +3,7 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gate_guardians/screens/home_screen.dart';
+import 'package:gate_guardians/services/attendance_service.dart';
 import 'package:gate_guardians/services/auth_service.dart';
 import 'package:gate_guardians/services/bulletin_service.dart';
 import 'package:gate_guardians/services/deployment_service.dart';
@@ -34,6 +35,7 @@ void main() {
         bulletinService: BulletinService(firestore: firestore),
         deploymentService: DeploymentService(firestore: firestore),
         rosterService: RosterService(firestore: firestore),
+        attendanceService: AttendanceService(firestore: firestore),
         skipApprovalGateForTesting: skipApprovalGateForTesting,
       ),
     ));
@@ -458,6 +460,167 @@ void main() {
       expect(find.text('Pending Pat'), findsNothing);
       final doc = await firestore.collection('team').doc('pending-1').get();
       expect(doc.data()?['denied'], isTrue);
+    });
+  });
+
+  group('Attendance tab', () {
+    testWidgets('shows the empty state and a submitted log appears in history',
+        (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Jordan Usher',
+        'approved': true,
+        'denied': false,
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byTooltip('Attendance'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('0'), findsOneWidget);
+      // The history section sits below the form; scroll it into the
+      // ListView's build range before checking for it.
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(find.text('No attendance logs yet.'), findsOneWidget);
+      await tester.drag(find.byType(ListView), const Offset(0, 400));
+      await tester.pumpAndSettle();
+
+      for (var i = 0; i < 3; i++) {
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump();
+      }
+      await tester.pumpAndSettle();
+      expect(find.text('3'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.remove_rounded));
+      await tester.pumpAndSettle();
+      expect(find.text('2'), findsOneWidget);
+
+      await tester.tap(find.text('Publish Service Log'));
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(find.text('2'), findsOneWidget);
+      expect(find.textContaining('LOGGED BY: JORDAN USHER'), findsOneWidget);
+
+      final snap = await firestore.collection('attendance').get();
+      expect(snap.docs, hasLength(1));
+      expect(snap.docs.single.data()['headcount'], 2);
+      expect(snap.docs.single.data()['serviceType'], 'Sunday Morning');
+    });
+
+    testWidgets('the minus button cannot go below zero', (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Jordan Usher',
+        'approved': true,
+        'denied': false,
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byTooltip('Attendance'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.remove_rounded));
+      await tester.pumpAndSettle();
+
+      expect(find.text('0'), findsOneWidget);
+    });
+
+    testWidgets('a lead can edit an existing log', (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Lead Usher',
+        'role': 'Lead',
+        'approved': true,
+        'denied': false,
+      });
+      await firestore.collection('attendance').add({
+        'headcount': 100,
+        'serviceType': 'Sunday Morning',
+        'submittedBy': 'Someone',
+        'createdAt': DateTime(2026, 1, 4).toIso8601String(),
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byTooltip('Attendance'));
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(find.text('100'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.edit_rounded));
+      await tester.pumpAndSettle();
+
+      // The form above still has its own tally counter, so target the
+      // second (last) + button — the log's own counter, now at 100.
+      await tester.drag(find.byType(ListView), const Offset(0, -300));
+      await tester.pumpAndSettle();
+      for (var i = 0; i < 3; i++) {
+        await tester.tap(find.byIcon(Icons.add_rounded).last);
+        await tester.pump();
+      }
+      await tester.pumpAndSettle();
+      expect(find.text('103'), findsOneWidget);
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('103'), findsOneWidget);
+      final snap = await firestore.collection('attendance').get();
+      expect(snap.docs.single.data()['headcount'], 103);
+    });
+
+    testWidgets('a lead can delete a log after confirming', (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Lead Usher',
+        'role': 'Lead',
+        'approved': true,
+        'denied': false,
+      });
+      await firestore.collection('attendance').add({
+        'headcount': 100,
+        'serviceType': 'Sunday Morning',
+        'submittedBy': 'Someone',
+        'createdAt': DateTime(2026, 1, 4).toIso8601String(),
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byTooltip('Attendance'));
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.delete_outline_rounded));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No attendance logs yet.'), findsOneWidget);
+      final snap = await firestore.collection('attendance').get();
+      expect(snap.docs, isEmpty);
+    });
+
+    testWidgets('a plain usher cannot edit or delete logs', (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Jordan Usher',
+        'role': 'Usher',
+        'approved': true,
+        'denied': false,
+      });
+      await firestore.collection('attendance').add({
+        'headcount': 100,
+        'serviceType': 'Sunday Morning',
+        'submittedBy': 'Someone',
+        'createdAt': DateTime(2026, 1, 4).toIso8601String(),
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byTooltip('Attendance'));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.edit_rounded), findsNothing);
+      expect(find.byIcon(Icons.delete_outline_rounded), findsNothing);
     });
   });
 }
