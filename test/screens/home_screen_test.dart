@@ -6,6 +6,7 @@ import 'package:gate_guardians/screens/home_screen.dart';
 import 'package:gate_guardians/services/auth_service.dart';
 import 'package:gate_guardians/services/bulletin_service.dart';
 import 'package:gate_guardians/services/deployment_service.dart';
+import 'package:gate_guardians/services/roster_service.dart';
 import 'package:gate_guardians/services/team_service.dart';
 
 void main() {
@@ -32,6 +33,7 @@ void main() {
         teamService: TeamService(firestore: firestore),
         bulletinService: BulletinService(firestore: firestore),
         deploymentService: DeploymentService(firestore: firestore),
+        rosterService: RosterService(firestore: firestore),
         skipApprovalGateForTesting: skipApprovalGateForTesting,
       ),
     ));
@@ -179,5 +181,165 @@ void main() {
 
     expect(find.text('AUTHENTICATED ID'), findsOneWidget);
     expect(find.text('Jordan Usher'), findsWidgets);
+  });
+
+  group('Roster tab', () {
+    testWidgets('lists active roster members and hides Add Name for a plain usher',
+        (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Jordan Usher',
+        'role': 'Usher',
+        'approved': true,
+        'denied': false,
+      });
+      await firestore.collection('team').doc('other').set({
+        'name': 'Alex Lead',
+        'role': 'Lead',
+        'phone': '555-2222',
+        'approved': true,
+        'denied': false,
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byTooltip('Roster'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Usher Database'), findsOneWidget);
+      expect(find.text('Alex Lead'), findsOneWidget);
+      expect(find.text('Add Name'), findsNothing);
+    });
+
+    testWidgets('a lead can add a new usher through the dialog', (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Lead Usher',
+        'role': 'Lead',
+        'approved': true,
+        'denied': false,
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byTooltip('Roster'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Add Name'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, 'New Usher');
+      await tester.enterText(find.byType(TextField).last, '555-9999');
+      await tester.tap(find.text('Save to Database'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('New Usher'), findsOneWidget);
+      final snap = await firestore
+          .collection('team')
+          .where('name', isEqualTo: 'New Usher')
+          .get();
+      expect(snap.docs.single.data()['approved'], isTrue);
+    });
+
+    testWidgets('a lead can remove a usher after confirming', (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Lead Usher',
+        'role': 'Lead',
+        'approved': true,
+        'denied': false,
+      });
+      await firestore.collection('team').doc('other').set({
+        'name': 'Removable Usher',
+        'role': 'Usher',
+        'approved': true,
+        'denied': false,
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byTooltip('Roster'));
+      await tester.pumpAndSettle();
+
+      // Both the signed-in lead and "Removable Usher" show delete icons;
+      // alphabetical sort ("Lead Usher" < "Removable Usher") puts the
+      // target row's icon last.
+      await tester.tap(find.byIcon(Icons.delete_outline_rounded).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Removable Usher'), findsNothing);
+      final doc = await firestore.collection('team').doc('other').get();
+      expect(doc.exists, isFalse);
+    });
+  });
+
+  group('Admin tab', () {
+    testWidgets('shows the caught-up empty state with no pending registrations',
+        (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Admin Usher',
+        'role': 'Admin',
+        'approved': true,
+        'denied': false,
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byTooltip('Admin'));
+      await tester.pumpAndSettle();
+
+      expect(find.text("No pending registrations. You're all caught up."),
+          findsOneWidget);
+    });
+
+    testWidgets('approving a pending registration removes it from the list',
+        (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Admin Usher',
+        'role': 'Admin',
+        'approved': true,
+        'denied': false,
+      });
+      await firestore.collection('team').doc('pending-1').set({
+        'name': 'Pending Pat',
+        'phone': '555-1111',
+        'approved': false,
+        'denied': false,
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byTooltip('Admin'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pending Pat'), findsOneWidget);
+
+      await tester.tap(find.text('APPROVE'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pending Pat'), findsNothing);
+      final doc = await firestore.collection('team').doc('pending-1').get();
+      expect(doc.data()?['approved'], isTrue);
+    });
+
+    testWidgets('denying a pending registration removes it from the list',
+        (tester) async {
+      await firestore.collection('team').doc('uid-1').set({
+        'name': 'Admin Usher',
+        'role': 'Admin',
+        'approved': true,
+        'denied': false,
+      });
+      await firestore.collection('team').doc('pending-1').set({
+        'name': 'Pending Pat',
+        'phone': '555-1111',
+        'approved': false,
+        'denied': false,
+      });
+
+      await pumpHome(tester);
+      await tester.tap(find.byTooltip('Admin'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('DENY'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pending Pat'), findsNothing);
+      final doc = await firestore.collection('team').doc('pending-1').get();
+      expect(doc.data()?['denied'], isTrue);
+    });
   });
 }

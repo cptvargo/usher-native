@@ -29,4 +29,7 @@ class TeamProfile {
   final bool denied;
 
   bool get isAdmin => role == 'Admin';
+
+  /// Leads and admins can manage the roster; only admins approve/deny.
+  bool get isLead => role == 'Admin' || role == 'Lead';
 }

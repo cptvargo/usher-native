@@ -2,12 +2,15 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 
 import '../models/deployment.dart';
+import '../models/roster_member.dart';
 import '../models/team_profile.dart';
 import '../services/auth_service.dart';
 import '../services/bulletin_service.dart';
 import '../services/deployment_service.dart';
+import '../services/roster_service.dart';
 import '../services/team_service.dart';
 import '../theme/app_colors.dart';
 
@@ -19,6 +22,7 @@ class HomeScreen extends StatefulWidget {
     this.teamService,
     this.bulletinService,
     this.deploymentService,
+    this.rosterService,
     this.skipApprovalGateForTesting = false,
   });
 
@@ -27,6 +31,7 @@ class HomeScreen extends StatefulWidget {
   final TeamService? teamService;
   final BulletinService? bulletinService;
   final DeploymentService? deploymentService;
+  final RosterService? rosterService;
 
   /// TEMPORARY testing switch — skips the "Pending Approval" gate so the
   /// dashboard can be reached without an admin approving the account first.
@@ -90,6 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
           authService: _authService,
           bulletinService: widget.bulletinService,
           deploymentService: widget.deploymentService,
+          rosterService: widget.rosterService,
         );
       },
     );
@@ -236,6 +242,7 @@ class _Dashboard extends StatefulWidget {
     required this.authService,
     this.bulletinService,
     this.deploymentService,
+    this.rosterService,
   });
 
   final User user;
@@ -243,6 +250,7 @@ class _Dashboard extends StatefulWidget {
   final AuthService authService;
   final BulletinService? bulletinService;
   final DeploymentService? deploymentService;
+  final RosterService? rosterService;
 
   @override
   State<_Dashboard> createState() => _DashboardState();
@@ -331,6 +339,32 @@ class _DashboardState extends State<_Dashboard> {
     );
   }
 
+  Widget _buildTab() {
+    final destination = _destinations[_tabIndex];
+    switch (destination.label) {
+      case 'Dashboard':
+        return _DashboardTab(
+          key: const ValueKey('dashboard'),
+          profile: widget.profile,
+          bulletinService: widget.bulletinService,
+          deploymentService: widget.deploymentService,
+        );
+      case 'Roster':
+        return _RosterTab(
+          key: const ValueKey('roster'),
+          profile: widget.profile,
+          service: widget.rosterService ?? RosterService(),
+        );
+      case 'Admin':
+        return _AdminTab(
+          key: const ValueKey('admin'),
+          service: widget.rosterService ?? RosterService(),
+        );
+      default:
+        return _ComingSoonTab(key: ValueKey(_tabIndex), destination: destination);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -348,17 +382,7 @@ class _DashboardState extends State<_Dashboard> {
             Expanded(
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 220),
-                child: _tabIndex == 0
-                    ? _DashboardTab(
-                        key: const ValueKey('dashboard'),
-                        profile: widget.profile,
-                        bulletinService: widget.bulletinService,
-                        deploymentService: widget.deploymentService,
-                      )
-                    : _ComingSoonTab(
-                        key: ValueKey(_tabIndex),
-                        destination: _destinations[_tabIndex],
-                      ),
+                child: _buildTab(),
               ),
             ),
           ],
@@ -800,6 +824,482 @@ class _ComingSoonTab extends StatelessWidget {
   }
 }
 
+const _roleOptions = ['Usher', 'Lead', 'Admin'];
+
+Color _roleColor(String role) {
+  switch (role) {
+    case 'Admin':
+      return const Color(0xFF10B981);
+    case 'Lead':
+      return const Color(0xFF3B82F6);
+    default:
+      return AppColors.amber700;
+  }
+}
+
+class _ErrorNotice extends StatelessWidget {
+  const _ErrorNotice({required this.error});
+  final Object error;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline_rounded, size: 16, color: Color(0xFFEF4444)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Could not load data: $error',
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFFEF4444),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RosterTab extends StatelessWidget {
+  const _RosterTab({super.key, required this.profile, required this.service});
+
+  final TeamProfile profile;
+  final RosterService service;
+
+  Future<void> _openUsherForm(
+    BuildContext context, {
+    RosterMember? existing,
+  }) async {
+    final nameCtrl = TextEditingController(text: existing?.name);
+    final phoneCtrl = TextEditingController(text: existing?.phone);
+    var role = existing?.role ?? 'Usher';
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: Colors.white,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+          title: Text(
+            existing == null ? 'Add New Personnel' : 'Edit Personnel',
+            style: GoogleFonts.playfairDisplay(
+              fontStyle: FontStyle.italic,
+              fontWeight: FontWeight.w600,
+              color: AppColors.slate800,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _AuthLikeField(controller: nameCtrl, hint: 'Full Name'),
+              const SizedBox(height: 12),
+              _AuthLikeField(controller: phoneCtrl, hint: 'Phone Number'),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: role,
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: AppColors.amber50.withValues(alpha: 0.6),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                items: _roleOptions
+                    .map((r) => DropdownMenuItem(value: r, child: Text(r)))
+                    .toList(),
+                onChanged: (v) => setState(() => role = v ?? role),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.amber700),
+              onPressed: () async {
+                final name = nameCtrl.text.trim();
+                final phone = phoneCtrl.text.trim();
+                if (name.isEmpty || phone.isEmpty) return;
+                if (existing == null) {
+                  await service.addUsher(name: name, phone: phone, role: role);
+                } else {
+                  await service.updateUsher(existing.id,
+                      name: name, phone: phone, role: role);
+                }
+                if (context.mounted) Navigator.of(context).pop();
+              },
+              child: Text(existing == null ? 'Save to Database' : 'Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context, RosterMember member) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        title: const Text('Remove from roster?'),
+        content: Text(
+          'Remove ${member.name} from the roster permanently?',
+          style: GoogleFonts.inter(color: AppColors.slate500),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await service.deleteUsher(member.id);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<RosterMember>>(
+      stream: service.watchActiveRoster(),
+      builder: (context, snapshot) {
+        final roster = snapshot.data ?? const <RosterMember>[];
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Usher Database',
+                        style: GoogleFonts.playfairDisplay(
+                          fontSize: 22,
+                          fontStyle: FontStyle.italic,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.slate800,
+                        ),
+                      ),
+                      Text(
+                        '${roster.length} Active Personnel',
+                        style: GoogleFonts.inter(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.4,
+                          color: AppColors.amber600.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (profile.isLead)
+                  FilledButton.icon(
+                    onPressed: () => _openUsherForm(context),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.slate900,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    icon: const Icon(Icons.add_rounded, size: 16),
+                    label: const Text('Add Name'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            if (snapshot.hasError)
+              _ErrorNotice(error: snapshot.error!)
+            else if (!snapshot.hasData)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (roster.isEmpty)
+              Text(
+                'No active personnel yet.',
+                style: GoogleFonts.inter(color: AppColors.slate400),
+              )
+            else
+              for (final member in roster)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: AppColors.amber50),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [AppColors.amber700, AppColors.amber800],
+                          ),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          member.name.isNotEmpty
+                              ? member.name[0].toUpperCase()
+                              : '?',
+                          style: GoogleFonts.inter(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              member.name,
+                              style: GoogleFonts.inter(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                                color: AppColors.slate800,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: _roleColor(member.role)
+                                        .withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    member.role,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.w800,
+                                      color: _roleColor(member.role),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  member.phone ?? 'No Phone',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 10,
+                                    color: AppColors.slate400,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (profile.isLead) ...[
+                        IconButton(
+                          onPressed: () =>
+                              _openUsherForm(context, existing: member),
+                          icon: const Icon(Icons.edit_rounded, size: 16),
+                          color: AppColors.slate400,
+                        ),
+                        IconButton(
+                          onPressed: () => _confirmDelete(context, member),
+                          icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                          color: AppColors.slate400,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _AuthLikeField extends StatelessWidget {
+  const _AuthLikeField({required this.controller, required this.hint});
+  final TextEditingController controller;
+  final String hint;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      decoration: InputDecoration(
+        hintText: hint,
+        filled: true,
+        fillColor: AppColors.amber50.withValues(alpha: 0.6),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide.none,
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminTab extends StatelessWidget {
+  const _AdminTab({super.key, required this.service});
+  final RosterService service;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<RosterMember>>(
+      stream: service.watchPendingRegistrations(),
+      builder: (context, snapshot) {
+        final pending = snapshot.data ?? const <RosterMember>[];
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+          children: [
+            Text(
+              'Admin Panel',
+              style: GoogleFonts.playfairDisplay(
+                fontSize: 22,
+                fontStyle: FontStyle.italic,
+                fontWeight: FontWeight.w600,
+                color: AppColors.slate800,
+              ),
+            ),
+            Text(
+              'REGISTRATION APPROVALS',
+              style: GoogleFonts.inter(
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.4,
+                color: AppColors.amber600.withValues(alpha: 0.7),
+              ),
+            ),
+            const SizedBox(height: 18),
+            if (snapshot.hasError)
+              _ErrorNotice(error: snapshot.error!)
+            else if (!snapshot.hasData)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (pending.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(28),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: AppColors.amber50),
+                ),
+                child: Column(
+                  children: [
+                    const Icon(Icons.check_circle_rounded,
+                        size: 32, color: Color(0xFF10B981)),
+                    const SizedBox(height: 10),
+                    Text(
+                      "No pending registrations. You're all caught up.",
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.playfairDisplay(
+                        fontStyle: FontStyle.italic,
+                        color: AppColors.slate500,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              for (final member in pending)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: AppColors.amber50),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              member.name,
+                              style: GoogleFonts.inter(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                                color: AppColors.slate800,
+                              ),
+                            ),
+                            Text(
+                              member.phone ?? member.email ?? '',
+                              style: GoogleFonts.inter(
+                                fontSize: 10,
+                                color: AppColors.slate400,
+                              ),
+                            ),
+                            if (member.createdAt != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'Registered: ${DateFormat.yMMMd().format(member.createdAt!)}',
+                                style: GoogleFonts.inter(
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.amber600.withValues(alpha: 0.7),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => service.approve(member.id),
+                        style: TextButton.styleFrom(
+                          backgroundColor: const Color(0xFFECFDF5),
+                          foregroundColor: const Color(0xFF10B981),
+                        ),
+                        child: const Text('APPROVE'),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: () => service.deny(member.id),
+                        style: TextButton.styleFrom(
+                          backgroundColor: const Color(0xFFFEF2F2),
+                          foregroundColor: const Color(0xFFEF4444),
+                        ),
+                        child: const Text('DENY'),
+                      ),
+                    ],
+                  ),
+                ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _BottomNav extends StatelessWidget {
   const _BottomNav({
     required this.destinations,
@@ -834,10 +1334,12 @@ class _BottomNav extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
             for (var i = 0; i < destinations.length; i++)
-              _NavIcon(
-                destination: destinations[i],
-                selected: i == selectedIndex,
-                onTap: () => onSelected(i),
+              Expanded(
+                child: _NavIcon(
+                  destination: destinations[i],
+                  selected: i == selectedIndex,
+                  onTap: () => onSelected(i),
+                ),
               ),
           ],
         ),
