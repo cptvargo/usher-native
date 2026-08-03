@@ -14,10 +14,16 @@ class AuthScreen extends StatefulWidget {
     super.key,
     this.initialMode = 'login',
     this.authService,
+    this.onAuthenticated,
   });
 
   final String initialMode;
   final AuthService? authService;
+
+  /// Called after a successful login/register. Defaults to popping this
+  /// screen, which reveals [AuthGate]'s now-signed-in Home screen
+  /// underneath.
+  final VoidCallback? onAuthenticated;
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -106,13 +112,11 @@ class _AuthScreenState extends State<AuthScreen> {
         );
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_mode == _AuthMode.register
-              ? 'Account created! A lead usher will approve your access shortly.'
-              : 'Welcome back.'),
-        ),
-      );
+      if (widget.onAuthenticated != null) {
+        widget.onAuthenticated!();
+      } else {
+        Navigator.of(context).maybePop();
+      }
     } on AuthException catch (e) {
       HapticFeedback.mediumImpact();
       setState(() => _error = e.message);

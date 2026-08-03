@@ -2,8 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
-import 'screens/auth_screen.dart';
-import 'screens/landing_screen.dart';
+import 'screens/auth_gate.dart';
 import 'theme/app_colors.dart';
 
 void main() async {
@@ -25,15 +24,9 @@ class GateGuardiansApp extends StatelessWidget {
         scaffoldBackgroundColor: AppColors.background,
         useMaterial3: true,
       ),
-      home: Builder(
-        builder: (context) => LandingScreen(
-          onEnterPortal: (mode) {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => AuthScreen(initialMode: mode)),
-            );
-          },
-        ),
-      ),
+      // TODO(testing): set back to false (or remove) once manual testing
+      // of the dashboard is done — this skips the real approval gate.
+      home: const AuthGate(skipApprovalGateForTesting: true),
     );
   }
 }

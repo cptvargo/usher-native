@@ -1,0 +1,183 @@
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:gate_guardians/screens/home_screen.dart';
+import 'package:gate_guardians/services/auth_service.dart';
+import 'package:gate_guardians/services/bulletin_service.dart';
+import 'package:gate_guardians/services/deployment_service.dart';
+import 'package:gate_guardians/services/team_service.dart';
+
+void main() {
+  late FakeFirebaseFirestore firestore;
+  late MockFirebaseAuth auth;
+
+  setUp(() {
+    firestore = FakeFirebaseFirestore();
+    auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'uid-1', email: 'jordan@church.org'),
+    );
+  });
+
+  Future<void> pumpHome(
+    WidgetTester tester, {
+    bool settle = true,
+    bool skipApprovalGateForTesting = false,
+  }) async {
+    await tester.pumpWidget(MaterialApp(
+      home: HomeScreen(
+        user: auth.currentUser!,
+        authService: AuthService(auth: auth, firestore: firestore),
+        teamService: TeamService(firestore: firestore),
+        bulletinService: BulletinService(firestore: firestore),
+        deploymentService: DeploymentService(firestore: firestore),
+        skipApprovalGateForTesting: skipApprovalGateForTesting,
+      ),
+    ));
+    if (settle) {
+      await tester.pumpAndSettle();
+    } else {
+      // The pending-approval screen has an indefinite spinner, so
+      // pumpAndSettle would never return — pump a couple of frames instead.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+  }
+
+  testWidgets('shows the denied screen and can sign out', (tester) async {
+    await firestore.collection('team').doc('uid-1').set({
+      'name': 'Jordan Usher',
+      'approved': false,
+      'denied': true,
+    });
+
+    await pumpHome(tester);
+
+    expect(find.text('Registration Denied'), findsOneWidget);
+    await tester.tap(find.text('SIGN OUT'));
+    await tester.pumpAndSettle();
+
+    expect(auth.currentUser, isNull);
+  });
+
+  testWidgets('shows the pending-approval screen', (tester) async {
+    await firestore.collection('team').doc('uid-1').set({
+      'name': 'Jordan Usher',
+      'approved': false,
+      'denied': false,
+    });
+
+    await pumpHome(tester, settle: false);
+
+    expect(find.text('Pending Approval'), findsOneWidget);
+  });
+
+  testWidgets(
+      'skipApprovalGateForTesting reaches the dashboard despite approved being false',
+      (tester) async {
+    await firestore.collection('team').doc('uid-1').set({
+      'name': 'Jordan Usher',
+      'approved': false,
+      'denied': false,
+    });
+
+    await pumpHome(tester, skipApprovalGateForTesting: true);
+
+    expect(find.text('Pending Approval'), findsNothing);
+    expect(find.text('Sunday Connect'), findsOneWidget);
+  });
+
+  testWidgets(
+      'shows the dashboard with bulletin, empty deployments state, and nav tabs',
+      (tester) async {
+    await firestore.collection('team').doc('uid-1').set({
+      'name': 'Jordan Usher',
+      'role': 'Usher',
+      'approved': true,
+      'denied': false,
+    });
+
+    await pumpHome(tester);
+
+    expect(find.text('Sunday Connect'), findsOneWidget);
+    expect(find.text('Welcome back, Jordan.'), findsOneWidget);
+    expect(
+      find.text('Let our service be a blessing to all who enter these gates.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('No upcoming assignments yet. Check back once the next roster is posted.'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byTooltip('Calendar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Coming soon.'), findsOneWidget);
+  });
+
+  testWidgets('admins see the Admin nav destination', (tester) async {
+    await firestore.collection('team').doc('uid-1').set({
+      'name': 'Lead Usher',
+      'role': 'Admin',
+      'approved': true,
+      'denied': false,
+    });
+
+    await pumpHome(tester);
+
+    expect(find.byTooltip('Admin'), findsOneWidget);
+  });
+
+  testWidgets('non-admins do not see the Admin nav destination', (tester) async {
+    await firestore.collection('team').doc('uid-1').set({
+      'name': 'Jordan Usher',
+      'role': 'Usher',
+      'approved': true,
+      'denied': false,
+    });
+
+    await pumpHome(tester);
+
+    expect(find.byTooltip('Admin'), findsNothing);
+  });
+
+  testWidgets('editing and saving the bulletin persists the new text',
+      (tester) async {
+    await firestore.collection('team').doc('uid-1').set({
+      'name': 'Jordan Usher',
+      'approved': true,
+      'denied': false,
+    });
+
+    await pumpHome(tester);
+
+    await tester.tap(find.text('EDIT'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Doors open at 9am.');
+    await tester.tap(find.text('SAVE'));
+    await tester.pumpAndSettle();
+
+    final doc = await firestore.collection('content').doc('service_bulletin').get();
+    expect(doc.data()?['text'], 'Doors open at 9am.');
+    expect(find.text('Doors open at 9am.'), findsOneWidget);
+  });
+
+  testWidgets('opening the profile sheet shows the name and a sign-out action',
+      (tester) async {
+    await firestore.collection('team').doc('uid-1').set({
+      'name': 'Jordan Usher',
+      'approved': true,
+      'denied': false,
+    });
+
+    await pumpHome(tester);
+
+    await tester.tap(find.byKey(const ValueKey('avatarButton')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('AUTHENTICATED ID'), findsOneWidget);
+    expect(find.text('Jordan Usher'), findsWidgets);
+  });
+}

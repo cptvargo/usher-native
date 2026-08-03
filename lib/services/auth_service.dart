@@ -184,6 +184,8 @@ class AuthService {
     }
   }
 
+  Future<void> signOut() => _auth.signOut();
+
   Future<void> sendPasswordReset(String email) async {
     final trimmed = email.trim();
     if (trimmed.isEmpty) {

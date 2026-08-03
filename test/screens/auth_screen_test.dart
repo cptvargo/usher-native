@@ -54,11 +54,13 @@ void main() {
     WidgetTester tester, {
     String initialMode = 'login',
     AuthService? authService,
+    VoidCallback? onAuthenticated,
   }) async {
     await tester.pumpWidget(MaterialApp(
       home: AuthScreen(
         initialMode: initialMode,
         authService: authService ?? _FakeAuthService(),
+        onAuthenticated: onAuthenticated,
       ),
     ));
     await tester.pumpAndSettle();
@@ -105,10 +107,11 @@ void main() {
     expect(find.text('SEND RESET LINK'), findsOneWidget);
   });
 
-  testWidgets('successful login shows a welcome-back confirmation',
-      (tester) async {
+  testWidgets('successful login invokes onAuthenticated', (tester) async {
     final service = _FakeAuthService();
-    await pump(tester, authService: service);
+    var authenticated = false;
+    await pump(tester,
+        authService: service, onAuthenticated: () => authenticated = true);
 
     await tester.enterText(find.byType(TextField).first, 'jordan@church.org');
     await tester.enterText(find.byType(TextField).last, 'password123');
@@ -116,7 +119,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(service.loginCalled, isTrue);
-    expect(find.text('Welcome back.'), findsOneWidget);
+    expect(authenticated, isTrue);
   });
 
   testWidgets('failed login shows the error banner from AuthService',
@@ -133,10 +136,13 @@ void main() {
     expect(find.text('Incorrect email or password.'), findsOneWidget);
   });
 
-  testWidgets('successful registration shows an approval-pending confirmation',
-      (tester) async {
+  testWidgets('successful registration invokes onAuthenticated', (tester) async {
     final service = _FakeAuthService();
-    await pump(tester, initialMode: 'register', authService: service);
+    var authenticated = false;
+    await pump(tester,
+        initialMode: 'register',
+        authService: service,
+        onAuthenticated: () => authenticated = true);
 
     await tester.enterText(find.byType(TextField).at(0), 'Jordan Usher');
     await tester.enterText(find.byType(TextField).at(1), 'jordan@church.org');
@@ -145,10 +151,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(service.registerCalled, isTrue);
-    expect(
-      find.text('Account created! A lead usher will approve your access shortly.'),
-      findsOneWidget,
-    );
+    expect(authenticated, isTrue);
   });
 
   testWidgets('failed registration shows the error banner from AuthService',
